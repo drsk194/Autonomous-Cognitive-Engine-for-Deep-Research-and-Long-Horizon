@@ -39,3 +39,5 @@ def run_query(request: RequestModel):
         "report": report,
         "score": score
     }
+
+
