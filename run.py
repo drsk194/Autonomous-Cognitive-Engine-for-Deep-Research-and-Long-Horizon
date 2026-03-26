@@ -200,6 +200,40 @@ def main() -> None:
         run_agent(user_input)
 
 
+# ==========================================================
+# Supervisor Runner for API
+# ==========================================================
+
+from langchain_core.messages import HumanMessage
+from graph import graph
+
+def run_supervisor(query: str) -> str:
+    """
+    Runs the supervisor agent and returns final report.
+    Used by FastAPI endpoint.
+    """
+
+    # Initial state
+    state = {
+        "messages": [HumanMessage(content=query)],
+        "todos": [],
+        "current_task_index": None,
+        "files": {},
+        "execution_log": [],
+    }
+
+    # Run graph
+    final_state = graph.invoke(state)
+
+    # Get final report
+    files = final_state.get("files", {})
+
+    if "FINAL_REPORT.txt" in files:
+        return files["FINAL_REPORT.txt"]
+
+    return "No final report generated."
+
+
 if __name__ == "__main__":
     main()
     

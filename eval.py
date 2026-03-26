@@ -284,6 +284,35 @@ def run_evaluation(cases: List[str] | None = None) -> None:
     print("=" * 66 + "\n")
 
 
+# ==========================================================
+# Simple evaluation function for API usage
+# ==========================================================
+
+def evaluate_output(report: str) -> str:
+    """
+    Simple scoring function used by API.
+    Returns score from 1 to 10.
+    """
+
+    if not report:
+        return "0"
+
+    length = len(report)
+
+    if length > 4500:
+        return "10"
+
+    if length > 3000:
+        return "9"
+    elif length > 2000:
+        return "8"
+    elif length > 1000:
+        return "7"
+    elif length > 500:
+        return "6"
+    else:
+        return "5"
+
 if __name__ == "__main__":
     run_evaluation()
     
