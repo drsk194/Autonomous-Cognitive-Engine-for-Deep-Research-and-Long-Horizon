@@ -1,25 +1,20 @@
 """
-run.py
-Main entry point for the Autonomous Cognitive Engine.
-
-Usage:
-    python run.py
+run.py — Main entry point for the Autonomous Cognitive Engine.
+Usage: python run.py
 """
-
 from __future__ import annotations
-import json
-import sys
+import json, sys
 
 from langchain_core.messages import HumanMessage
 
 try:
-    from dotenv import load_dotenv
-    load_dotenv()
+    from dotenv import load_dotenv; load_dotenv()
 except ImportError:
     pass
 
 from tools import _set_files
 from graph import graph
+from memory import search_memory
 
 BANNER = """
 ╔══════════════════════════════════════════════════════════════════╗
@@ -35,8 +30,32 @@ SEP = "=" * 50
 
 
 def run_agent(user_input: str) -> dict:
-    _set_files({})
+    # ── Memory cache check — skip LLM if report already exists ───────────
+    cached = search_memory(user_input)
+    if cached:
+        best = max(cached, key=lambda x: len(x.get("summary", "")))
+        print(f"\n⚡ Found in memory — skipping LLM execution\n")
 
+        todos = best.get("todos", [])
+        if todos:
+            print(SEP)
+            print(" TASK PLAN (FROM MEMORY)")
+            print(SEP)
+            print(json.dumps(
+                [{"task": t["task"], "status": t.get("status","completed"), "result": t.get("result","")} for t in todos],
+                indent=2
+            ))
+            print()
+
+        print(SEP)
+        print(" FINAL REPORT (FROM MEMORY)")
+        print(SEP)
+        print(best["summary"])
+        print(SEP)
+        return {"files": {"FINAL_REPORT.txt": best["summary"]}}
+
+    # ── Fresh execution ───────────────────────────────────────────────────
+    _set_files({})
     print(f"\n  Task : {user_input}\n")
 
     final_state  = {}
@@ -44,38 +63,36 @@ def run_agent(user_input: str) -> dict:
 
     for chunk in graph.stream(
         {
-            "messages": [HumanMessage(content=user_input)],
-            "todos":    [],
+            "messages":           [HumanMessage(content=user_input)],
+            "todos":              [],
             "current_task_index": None,
-            "files":    {},
-            "execution_log": [],
+            "files":              {},
+            "execution_log":      [],
+            "delegation_log":     [],
+            "final_report":       None,
         },
         stream_mode="updates",
     ):
         for node_name, state_delta in chunk.items():
-
             todos = state_delta.get("todos", [])
             log   = state_delta.get("execution_log", [])
 
-            # ── MILESTONE 1: print JSON plan (all pending) on first creation ─
+            # Milestone 1 — print plan on first creation
             if node_name == "process" and todos and not plan_printed:
                 plan_printed = True
-
                 print(SEP)
                 print(" TASK PLAN CREATED")
                 print(SEP)
-                plan_json = [
-                    {"task": t["task"], "status": t["status"], "result": t.get("result", "")}
-                    for t in todos
-                ]
-                print(json.dumps(plan_json, indent=2))
+                print(json.dumps(
+                    [{"task": t["task"], "status": t["status"], "result": t.get("result","")} for t in todos],
+                    indent=2
+                ))
                 print()
 
-            # ── Live progress ─────────────────────────────────────────────
+            # Live progress
             if log:
                 latest = log[-1]
 
-                # ⏳ task starting
                 if node_name == "select_task" and "[Select] Task" in latest:
                     try:
                         part = latest.split("[Select] Task ")[1]
@@ -85,58 +102,51 @@ def run_agent(user_input: str) -> dict:
                     except Exception:
                         pass
 
-                # ✅ task completed
                 if node_name == "update_task" and "[Update] Task" in latest and "marked completed" in latest:
                     try:
                         part = latest.split("[Update] Task ")[1]
-                        num_part = part.split(" marked")[0]
-                        x, n = num_part.split("/")
+                        x, n = part.split(" marked")[0].split("/")
                         print(f"✅ Completed Task {x}/{n}")
                     except Exception:
                         pass
 
-                # 🔀 delegation
                 if "[Milestone3]" in latest:
                     agent = latest.split("sub-agent: ")[-1]
                     print(f"  🔀 Delegated → {agent}")
 
-            # final report done
             if node_name == "synthesize":
                 print(f"\n✅ Final report created")
 
-            # merge state
+            # Merge state
             for k, v in state_delta.items():
-                if isinstance(v, list) and k in ("todos", "execution_log"):
+                if isinstance(v, list) and k in ("todos", "execution_log", "delegation_log"):
                     final_state[k] = v
                 elif isinstance(v, dict) and k == "files":
                     final_state.setdefault("files", {}).update(v)
                 else:
                     final_state[k] = v
 
-    # ── Final display ──────────────────────────────────────────────────────
-    todos = final_state.get("todos", [])
-    files = final_state.get("files", {})
-    log   = final_state.get("execution_log", [])
-
-    _display_results(todos, files, log)
+    _display_results(
+        final_state.get("todos", []),
+        final_state.get("files", {}),
+        final_state.get("execution_log", []),
+        final_state.get("delegation_log", []),
+    )
     return final_state
 
 
-def _display_results(todos: list, files: dict, log: list) -> None:
-
-    # ── Print updated JSON with all tasks completed ───────────────────────
+def _display_results(todos: list, files: dict, log: list, delegation_log: list = None) -> None:
     print()
     print(SEP)
     print(" TASK PLAN COMPLETED")
     print(SEP)
-    plan_json = [
-        {"task": t["task"], "status": t.get("status", "completed"), "result": t.get("result", "")}
-        for t in todos
-    ]
-    print(json.dumps(plan_json, indent=2))
+    print(json.dumps(
+        [{"task": t["task"], "status": t.get("status","completed"), "result": t.get("result","")} for t in todos],
+        indent=2
+    ))
     print()
 
-    # ── MILESTONE 2 ───────────────────────────────────────────────────────
+    # Milestone 2 — virtual file system
     print(SEP)
     print(f" MILESTONE 2  —  Virtual File System  ({len(files)} files)")
     print(SEP)
@@ -146,17 +156,15 @@ def _display_results(todos: list, files: dict, log: list) -> None:
     else:
         print("  No files created.")
 
-    # Show edit_file usage from log
-    edit_logs = [l for l in log if "edit_file" in l.lower() or "[Execute] Tools called:" in l and "edit_file" in l]
     edits = [l for l in log if "[Execute] Tools called:" in l and "edit_file" in l]
     if edits:
         print(f"\n  ✏️  edit_file used: {len(edits)} time(s)  — read→modify→edit chain demonstrated")
 
-    # ── MILESTONE 3 ───────────────────────────────────────────────────────
+    # Milestone 3 — delegations
     delegations = [l for l in log if "[Milestone3]" in l]
     print()
     print(SEP)
-    print(f" MILESTONE 3  —  Sub-Agent Delegations ")
+    print(" MILESTONE 3  —  Sub-Agent Delegations")
     print(SEP)
     if delegations:
         for entry in delegations:
@@ -165,7 +173,16 @@ def _display_results(todos: list, files: dict, log: list) -> None:
     else:
         print("  No delegations this run.")
 
-    # ── FINAL REPORT ──────────────────────────────────────────────────────
+    # Milestone 4 — delegation log
+    if delegation_log:
+        print()
+        print(SEP)
+        print(" MILESTONE 4  —  Delegation Log")
+        print(SEP)
+        for entry in delegation_log:
+            print(f"  📋 {entry}")
+
+    # Final report
     print()
     print(SEP)
     print(" FINAL REPORT")
@@ -174,13 +191,18 @@ def _display_results(todos: list, files: dict, log: list) -> None:
         print(files["FINAL_REPORT.txt"])
     else:
         print("  No final report generated.")
-
     print(SEP)
+
+
+def run_supervisor(query: str) -> str:
+    """Run the agent and return the final report string. Used by FastAPI."""
+    result = run_agent(query)
+    files = result.get("files", {})
+    return files.get("FINAL_REPORT.txt", result.get("final_report", "No report generated."))
 
 
 def main() -> None:
     print(BANNER)
-
     while True:
         print("\nEnter complex task:\n")
         try:
@@ -192,7 +214,6 @@ def main() -> None:
         if not user_input:
             print("  ⚠️  Please enter a task.")
             continue
-
         if user_input.lower() in ("exit", "quit", "q"):
             print("Goodbye!")
             sys.exit(0)
@@ -200,42 +221,5 @@ def main() -> None:
         run_agent(user_input)
 
 
-# ==========================================================
-# Supervisor Runner for API
-# ==========================================================
-
-from langchain_core.messages import HumanMessage
-from graph import graph
-
-def run_supervisor(query: str) -> str:
-    """
-    Runs the supervisor agent and returns final report.
-    Used by FastAPI endpoint.
-    """
-
-    # Initial state
-    state = {
-        "messages": [HumanMessage(content=query)],
-        "todos": [],
-        "current_task_index": None,
-        "files": {},
-        "execution_log": [],
-    }
-
-    # Run graph
-    final_state = graph.invoke(state)
-
-    # Get final report
-    files = final_state.get("files", {})
-
-    if "FINAL_REPORT.txt" in files:
-        return files["FINAL_REPORT.txt"]
-
-    return "No final report generated."
-
-
 if __name__ == "__main__":
     main()
-    
-
-
