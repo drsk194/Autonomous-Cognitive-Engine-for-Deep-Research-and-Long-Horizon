@@ -3,9 +3,10 @@ run.py — Main entry point for the Autonomous Cognitive Engine.
 Usage: python run.py
 """
 from __future__ import annotations
-import json, sys
+import json, os, sys
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_groq import ChatGroq
 
 try:
     from dotenv import load_dotenv; load_dotenv()
@@ -28,8 +29,60 @@ BANNER = """
 
 SEP = "=" * 50
 
+# ── Simple query classifier + direct answerer ─────────────────────────────────
+_llm_chat = ChatGroq(
+    model="llama-3.1-8b-instant",
+    temperature=0.3,
+    api_key=os.getenv("GROQ_API_KEY", ""),
+    max_tokens=512,
+)
+
+_SIMPLE_KEYWORDS = {
+    "what is", "what are", "what does", "what do", "what was",
+    "who is", "who are", "who was",
+    "how does", "how do", "how is",
+    "why is", "why are", "why does",
+    "define ", "explain ", "meaning of", "tell me about",
+    "difference between", "example of", "examples of",
+    "when was", "when did", "where is", "where are",
+}
+
+def _is_simple_query(text: str) -> bool:
+    """Return True if the input looks like a simple factual/conversational question."""
+    t = text.lower().strip()
+    # Short inputs are likely simple
+    if len(t.split()) <= 6:
+        return True
+    # Starts with a known simple pattern
+    if any(t.startswith(kw) for kw in _SIMPLE_KEYWORDS):
+        return True
+    # Ends with a question mark and is short-ish
+    if t.endswith("?") and len(t.split()) <= 12:
+        return True
+    return False
+
+
+def _direct_answer(query: str) -> str:
+    """Answer a simple question directly without the full pipeline."""
+    response = _llm_chat.invoke([
+        SystemMessage(content=(
+            "You are a helpful, knowledgeable assistant. "
+            "Answer the user's question clearly and concisely. "
+            "No need for structured reports or plans — just a direct, friendly answer."
+        )),
+        HumanMessage(content=query),
+    ])
+    return response.content.strip()
+
 
 def run_agent(user_input: str) -> dict:
+    # ── Simple query — answer directly, skip the full pipeline ───────────
+    if _is_simple_query(user_input):
+        print(f"\n💬 Simple query detected — answering directly\n")
+        answer = _direct_answer(user_input)
+        print(answer)
+        return {"files": {"DIRECT_ANSWER.txt": answer}, "simple": True}
+
     # ── Memory cache check — skip LLM if report already exists ───────────
     cached = search_memory(user_input)
     if cached:
@@ -194,11 +247,14 @@ def _display_results(todos: list, files: dict, log: list, delegation_log: list =
     print(SEP)
 
 
-def run_supervisor(query: str) -> str:
-    """Run the agent and return the final report string. Used by FastAPI."""
+def run_supervisor(query: str) -> tuple[str, bool]:
+    """Run the agent and return (report_string, is_simple). Used by FastAPI."""
     result = run_agent(query)
     files = result.get("files", {})
-    return files.get("FINAL_REPORT.txt", result.get("final_report", "No report generated."))
+    is_simple = result.get("simple", False)
+    if is_simple:
+        return files.get("DIRECT_ANSWER.txt", ""), True
+    return files.get("FINAL_REPORT.txt", result.get("final_report", "No report generated.")), False
 
 
 def main() -> None:

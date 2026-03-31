@@ -54,8 +54,8 @@ def run_query(request: RequestModel):
     from memory import search_memory
     cached = search_memory(request.query)
     from_memory = bool(cached)
-    report = run_supervisor(request.query)
-    score = evaluate_output(report)
-    return {"report": report, "score": score, "from_memory": from_memory}
+    report, is_simple = run_supervisor(request.query)
+    score = "—" if is_simple else evaluate_output(report)
+    return {"report": report, "score": score, "from_memory": from_memory, "is_simple": is_simple}
 
 

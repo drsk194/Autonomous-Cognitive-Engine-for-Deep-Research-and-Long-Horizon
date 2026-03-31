@@ -232,7 +232,7 @@ export default function App() {
       clearTimeout(timeoutId);
       if (!res.ok) throw new Error(`Server error: ${res.status}`);
       const data = await res.json();
-      setMessages((prev) => [...prev, { role: "agent", text: data.report, score: data.score, fromMemory: data.from_memory }]);
+      setMessages((prev) => [...prev, { role: "agent", text: data.report, score: data.is_simple ? null : data.score, fromMemory: data.from_memory, isSimple: data.is_simple }]);
       setRefreshTrigger((n) => n + 1); // refresh sidebar after new result
     } catch (err) {
       clearTimeout(timeoutId);
