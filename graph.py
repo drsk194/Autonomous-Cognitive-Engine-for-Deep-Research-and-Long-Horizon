@@ -434,6 +434,7 @@ def synthesize_node(state: AgentState) -> dict:
             "summary": final_report,
             "todos": todos,
             "delegation_log": delegation_log,
+            "messages": [{"type": msg.type, "content": msg.content} for msg in messages],
         })
         print("\n📌 Memory saved")
     except Exception as e:

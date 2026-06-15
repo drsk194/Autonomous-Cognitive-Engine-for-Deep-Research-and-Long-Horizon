@@ -75,6 +75,62 @@ def _direct_answer(query: str) -> str:
     return response.content.strip()
 
 
+def _llm_judge_detailed(report: str, query: str) -> dict:
+    """
+    LLM-as-a-judge: score the report on 5 individual dimensions (1-5 each).
+    Returns a dict with per-dimension scores + overall average.
+    """
+    if not report or len(report) < 100:
+        return {}
+    try:
+        response = _llm_chat.invoke([
+            SystemMessage(content=(
+                "You are a strict research report evaluator. "
+                "Score the report on exactly these 5 dimensions, each from 1 to 5:\n"
+                "1. Completeness  — does it cover all aspects of the query?\n"
+                "2. Accuracy      — are the facts correct and well-sourced?\n"
+                "3. Structure     — is it well-organized with clear sections?\n"
+                "4. Depth         — does it go beyond surface-level information?\n"
+                "5. Actionability — does it provide useful conclusions or recommendations?\n\n"
+                "Return ONLY valid JSON in this exact format, nothing else:\n"
+                '{"completeness": 4, "accuracy": 3, "structure": 5, "depth": 4, "actionability": 3}'
+            )),
+            HumanMessage(content=f"QUERY: {query}\n\nREPORT:\n{report[:3000]}"),
+        ])
+        raw = response.content.strip()
+        # Extract JSON even if wrapped in markdown
+        if "```" in raw:
+            raw = raw.split("```")[1].replace("json", "").strip()
+        scores = json.loads(raw)
+        # Clamp all values 1-5
+        dims = ["completeness", "accuracy", "structure", "depth", "actionability"]
+        result = {k: max(1, min(5, int(scores.get(k, 3)))) for k in dims}
+        result["overall"] = round(sum(result[k] for k in dims) / len(dims), 1)
+        return result
+    except Exception:
+        return {}
+
+
+def _print_judge_scores(scores: dict) -> None:
+    """Print the LLM judge breakdown in a clean table."""
+    if not scores:
+        return
+    bar = lambda n, mx: "█" * n + "░" * (mx - n)
+    print()
+    print(SEP)
+    print(" LLM-AS-A-JUDGE  —  Output Quality Breakdown")
+    print(SEP)
+    dims = ["completeness", "accuracy", "structure", "depth", "actionability"]
+    for dim in dims:
+        score = scores.get(dim, 0)
+        print(f"  {dim.capitalize():<16} {bar(score, 5)}  {score}/5")
+    print()
+    overall = scores.get("overall", 0)
+    stars = "★" * round(overall) + "☆" * (5 - round(overall))
+    print(f"  Overall          {stars}  {overall}/5")
+    print(SEP)
+
+
 def run_agent(user_input: str) -> dict:
     # ── Simple query — answer directly, skip the full pipeline ───────────
     if _is_simple_query(user_input):
@@ -82,7 +138,6 @@ def run_agent(user_input: str) -> dict:
         answer = _direct_answer(user_input)
         print(answer)
         return {"files": {"DIRECT_ANSWER.txt": answer}, "simple": True}
-
     # ── Memory cache check — skip LLM if report already exists ───────────
     cached = search_memory(user_input)
     if cached:
@@ -185,6 +240,15 @@ def run_agent(user_input: str) -> dict:
         final_state.get("execution_log", []),
         final_state.get("delegation_log", []),
     )
+
+    # ── LLM-as-a-judge: score the final report on individual dimensions ───
+    final_report = final_state.get("files", {}).get("FINAL_REPORT.txt", "")
+    if final_report:
+        print("\n⚖️  Running LLM judge...")
+        judge_scores = _llm_judge_detailed(final_report, user_input)
+        _print_judge_scores(judge_scores)
+        final_state["judge_scores"] = judge_scores
+
     return final_state
 
 
@@ -253,8 +317,8 @@ def run_supervisor(query: str) -> tuple[str, bool]:
     files = result.get("files", {})
     is_simple = result.get("simple", False)
     if is_simple:
-        return files.get("DIRECT_ANSWER.txt", ""), True
-    return files.get("FINAL_REPORT.txt", result.get("final_report", "No report generated.")), False
+        return files.get("DIRECT_ANSWER.txt", ""), True, {}
+    return files.get("FINAL_REPORT.txt", result.get("final_report", "No report generated.")), False, result.get("judge_scores", {})
 
 
 def main() -> None:

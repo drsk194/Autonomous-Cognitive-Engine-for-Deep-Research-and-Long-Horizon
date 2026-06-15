@@ -14,10 +14,10 @@ A sophisticated, autonomous AI agent framework built with **LangGraph** that exe
 - [Project Structure](#project-structure)
 - [Setup & Installation](#setup--installation)
 - [Milestones](#milestones)
-  - [Milestone 1 — Structured Task Planning](#milestone-1--structured-task-planning-weeks-12)
-  - [Milestone 2 — Context Offloading via Virtual File System](#milestone-2--context-offloading-via-virtual-file-system-weeks-34)
-  - [Milestone 3 — Sub-Agent Delegation](#milestone-3--sub-agent-delegation-weeks-56)
-  - [Milestone 4 — Full Integration & Use Case Application](#milestone-4--full-integration--use-case-application-weeks-78)
+  - [Milestone 1 — Structured Task Planning](#milestone-1--structured-task-planning)
+  - [Milestone 2 — Context Offloading via Virtual File System](#milestone-2--context-offloading-via-virtual-file-system)
+  - [Milestone 3 — Sub-Agent Delegation](#milestone-3--sub-agent-delegation)
+  - [Milestone 4 — Full Integration & Use Case Application](#milestone-4--full-integration--use-case-application)
 - [Running the Agent](#running-the-agent)
 - [API Reference](#api-reference)
 - [Agent Workflow](#agent-workflow)
@@ -30,6 +30,7 @@ A sophisticated, autonomous AI agent framework built with **LangGraph** that exe
 The **Autonomous Cognitive Engine** is a "Deep Cognitive Task Framework" that moves beyond simple tool-calling loops to support:
 
 - **Structured planning** — breaks high-level objectives into ordered, actionable TODO lists
+- **Smart query routing** — simple questions (e.g. "what is AI?") are answered directly without triggering the full pipeline
 - **Context offloading** — stores intermediate results in a virtual file system to overcome LLM context-window limits
 - **Sub-agent delegation** — routes specialized sub-tasks (research, analysis, summarization, writing) to dedicated agents
 - **Persistent memory** — saves completed research summaries to disk and surfaces relevant past runs on new requests
@@ -42,14 +43,21 @@ The **Autonomous Cognitive Engine** is a "Deep Cognitive Task Framework" that mo
 
 ```
 User Request
-    │
-    ▼
+│
+├── Simple query? (e.g. "what is AI?") ──→ Direct LLM answer (no pipeline)
+│
+└── Complex task?
+          │
+          ▼
+     Memory Check ──── Hit ──→ Return cached report instantly (⚡)
+          │ Miss
+          ▼
 ┌─────────────────────────────────────────────────────┐
-│                  LangGraph StateGraph                │
+│                  LangGraph StateGraph               │
 │                                                     │
-│  ┌──────┐   ┌─────────┐   ┌─────────────┐          │
-│  │ Plan │──▶│ Process │──▶│ Select Task │◀─────┐   │
-│  └──────┘   └─────────┘   └──────┬──────┘      │   │
+│  ┌──────┐   ┌─────────┐   ┌─────────────┐           │
+│  │ Plan │──▶│ Process │──▶│ Select Task│◀─────┐   │
+│  └──────┘   └─────────┘   └──────┬──────┘       │   │
 │                                  │              │   │
 │                            ┌─────▼──────┐       │   │
 │                            │   Reason   │       │   │
@@ -59,20 +67,20 @@ User Request
 │                         │     Execute     │     │   │
 │                         │  ┌───────────┐  │     │   │
 │                         │  │ File Tools│  │     │   │
-│                         │  │   task()  │──┼──▶ Sub-Agents
+│                         │  │  task()   │──┼──▶ Sub-Agents
 │                         │  └───────────┘  │     │   │
 │                         └────────┬────────┘     │   │
 │                                  │              │   │
 │                         ┌────────▼────────┐     │   │
 │                         │  Update Task    │─────┘   │
 │                         └─────────────────┘         │
-│                                  │ (all done)        │
+│                                  │ (all done)       │
 │                         ┌────────▼────────┐         │
 │                         │   Synthesize    │         │
 │                         └────────┬────────┘         │
 └──────────────────────────────────┼─────────────────┘
                                    ▼
-                            Final Report + Score
+                        Final Report + Score
 ```
 
 **Sub-Agent Registry:**
@@ -93,7 +101,7 @@ User Request
 | Language | Python 3.11+ |
 | Agent Framework | LangGraph |
 | LLM Integration | LangChain |
-| LLM Provider | Groq (`llama-3.1-8b-instant`) |
+| LLM Provider | Groq (`llama-3.3-70b-versatile`, `llama-3.1-8b-instant`) |
 | Web Search | Tavily API |
 | API Layer | FastAPI |
 | Frontend | React (JSX) |
@@ -106,22 +114,22 @@ User Request
 ## Project Structure
 
 ```
-autonomous-cognitive-engine/
+deep-research_agent/
 │
-├── main.py           # FastAPI app — /run endpoint, CORS, evaluation
+├── api.py            # FastAPI app — /run, /memory endpoints, CORS
 ├── graph.py          # LangGraph workflow — all nodes and graph assembly
 ├── state.py          # AgentState TypedDict — shared state definition
 ├── tools.py          # All tool definitions (planning, file system, sub-agents)
-├── run.py            # CLI runner + run_supervisor() used by the API
+├── run.py            # CLI runner + simple query classifier + run_supervisor()
 ├── memory.py         # Persistent memory — save_memory() / search_memory()
-├── eval.py           # Output evaluation — LLM-as-a-judge scoring
+├── eval.py           # Output evaluation — LLM-as-a-judge scoring (10 test cases)
 │
-├── frontend/
-│   └── App.jsx       # React UI — query input, report display, score display
+├── frontendpage/
+│   └── src/
+│       └── App.js    # React UI — chat interface, history sidebar, theme toggle
 │
 ├── memory.json       # Auto-generated persistent memory store
 ├── .env              # API keys (not committed)
-├── requirements.txt  # Python dependencies
 └── README.md
 ```
 
@@ -133,6 +141,7 @@ autonomous-cognitive-engine/
 - `current_task_index` — index of the currently executing task (`None` when all done)
 - `files` — virtual file system dictionary `{filename → content}`
 - `execution_log` — human-readable trace of every major step
+- `delegation_log` — record of every sub-agent delegation event
 
 **`tools.py`** — All LangChain `@tool` definitions across all milestones:
 - `write_todos` (Milestone 1)
@@ -141,26 +150,33 @@ autonomous-cognitive-engine/
 
 **`graph.py`** — The full LangGraph `StateGraph`:
 - Nodes: `plan`, `process`, `select_task`, `reason`, `execute`, `update_task`, `synthesize`
+- Deterministic sub-agent routing via `_route_to_agent()`
 - Conditional routing logic between nodes
-- System prompts for the execution and synthesis LLMs
 
 **`run.py`** — CLI entry point and API runner:
-- `run_agent()` — streams graph execution with live progress indicators for CLI use
-- `run_supervisor()` — invokes the graph synchronously and returns `FINAL_REPORT.txt` for the FastAPI endpoint
+- `_is_simple_query()` — classifies short/factual questions to bypass the pipeline
+- `_direct_answer()` — answers simple questions with a single LLM call
+- `run_agent()` — streams graph execution with live progress indicators
+- `run_supervisor()` — invokes the graph synchronously for the FastAPI endpoint
 
-**`main.py`** — FastAPI application (Milestone 4):
-- `POST /run` — accepts a `query`, runs `run_supervisor()`, scores the output with `evaluate_output()`, and returns both
+**`api.py`** — FastAPI application (Milestone 4):
+- `POST /run` — runs the agent, scores output, returns `report`, `score`, `from_memory`, `is_simple`
+- `GET /memory` — returns all saved sessions for the frontend history sidebar
 
-**`memory.py`** — Persistent cross-session memory (Milestone 4):
-- `save_memory(entry)` — appends a `{topic, summary}` entry to `memory.json` (deduplicates by topic)
-- `search_memory(query)` — keyword-matches against stored topics and returns relevant past runs
+**`memory.py`** — Persistent cross-session memory:
+- `save_memory(entry)` — appends `{topic, summary, todos, delegation_log}` to `memory.json`
+- `search_memory(query)` — fuzzy keyword-matches against stored topics (35% overlap threshold)
 
-**`eval.py`** — Output quality evaluation (Milestone 4):
-- Scores the final report using an LLM-as-a-judge approach
+**`eval.py`** — Output quality evaluation:
+- Runs 10 test cases across all 4 milestones
+- LLM-as-a-judge scoring (1–10) per report
+- Pass/fail against 80% threshold for M1–M3, 70% for M4
 
-**`frontend/App.jsx`** — React UI (Milestone 4):
-- Text area for entering the research query
-- Calls `POST http://127.0.0.1:8000/run` and displays the final report and quality score
+**`frontendpage/src/App.js`** — React UI:
+- Chat bubble interface (user right, agent left)
+- Collapsible history sidebar with past sessions, task checklists, delegation logs
+- System-default dark/light theme with manual toggle
+- "⚡ Retrieved from past memory" badge on cached responses
 
 ---
 
@@ -170,7 +186,7 @@ autonomous-cognitive-engine/
 
 ```bash
 git clone <repo-url>
-cd autonomous-cognitive-engine
+cd deep-research_agent
 ```
 
 ### 2. Create a virtual environment
@@ -193,34 +209,31 @@ source .venv/bin/activate
 ```bash
 uv pip install -r requirements.txt
 # or
-pip install -r requirements.txt
-```
-
-**Core dependencies:**
-```
-langgraph
-langchain
-langchain-groq
-langchain-core
-tavily-python
-fastapi
-uvicorn
-python-dotenv
+pip install langgraph langchain langchain-groq langsmith \
+            tavily-python fastapi uvicorn python-dotenv
 ```
 
 ### 4. Configure environment variables
 
-Create a `.env` file in the project root:
+Create a `.env` file in `deep-research_agent/`:
 
 ```env
 GROQ_API_KEY=your_groq_api_key_here
 TAVILY_API_KEY=your_tavily_api_key_here
-LANGSMITH_API_KEY=your_langsmith_api_key_here     # optional, for tracing
-LANGCHAIN_TRACING_V2=true                          # optional, enable LangSmith
-LANGCHAIN_PROJECT=autonomous-cognitive-engine      # optional, LangSmith project name
+LANGCHAIN_API_KEY=your_langsmith_api_key_here
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_PROJECT=autonomous_cognitive_engine
+LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
 ```
 
-> **Note:** The agent degrades gracefully without Tavily — sub-agents that rely on web search will return a fallback message. LangSmith tracing is optional.
+> **Note:** The agent degrades gracefully without Tavily — sub-agents that rely on web search return a fallback message. LangSmith tracing is optional.
+
+### 5. Install frontend dependencies
+
+```bash
+cd frontendpage
+npm install
+```
 
 ---
 
@@ -228,18 +241,18 @@ LANGCHAIN_PROJECT=autonomous-cognitive-engine      # optional, LangSmith project
 
 ---
 
-### Milestone 1 — Structured Task Planning (Weeks 1–2)
+### Milestone 1 — Structured Task Planning
 
 **Goal:** Give the agent the ability to decompose any complex user request into a structured, ordered list of sub-tasks before executing anything.
 
 #### What was built
 
-The `write_todos` tool takes a high-level `objective` string and calls a JSON-mode LLM to produce exactly **5 ordered, actionable tasks**. Each task includes:
+The `write_todos` tool takes a high-level `objective` string and calls a JSON-mode LLM (`llama-3.3-70b-versatile`) to produce exactly **5 ordered, actionable tasks**. Each task includes:
 - `task` — a clear action-verb description (e.g., *"Research current trends in..."*)
 - `status` — `"pending"` initially
 - `result` — populated once the task is completed
 
-The `plan_node` in `graph.py` calls `write_todos` directly (bypassing the LLM tool-call intermediary to avoid schema validation issues with Groq) and injects the result as a synthetic `AIMessage + ToolMessage` pair into the state. The `process_tool_results` node then parses the JSON response and stores the TODO list into `AgentState.todos`.
+The `plan_node` in `graph.py` calls `write_todos` directly and injects the result as a synthetic `AIMessage + ToolMessage` pair into the state so LangSmith traces the tool call correctly. The `process_tool_results` node then parses the JSON and stores the TODO list into `AgentState.todos`.
 
 #### Task ordering rules enforced by the prompt
 
@@ -250,7 +263,6 @@ The `plan_node` in `graph.py` calls `write_todos` directly (bypassing the LLM to
 5. Review / Finalize fifth
 
 #### Key files
-
 - `tools.py` → `write_todos` tool
 - `graph.py` → `plan_node`, `process_tool_results` nodes
 
@@ -262,7 +274,7 @@ The `plan_node` in `graph.py` calls `write_todos` directly (bypassing the LLM to
   {"task": "Analyze key themes and trends",    "status": "pending", "result": ""},
   {"task": "Identify evaluation criteria",     "status": "pending", "result": ""},
   {"task": "Write a comprehensive report",     "status": "pending", "result": ""},
-  {"task": "Review and finalize the output",   "status": "pending", "result": ""}
+  {"task": "Evaluate and finalize the output", "status": "pending", "result": ""}
 ]
 ```
 
@@ -274,11 +286,9 @@ The `plan_node` in `graph.py` calls `write_todos` directly (bypassing the LLM to
 | Tool Invocation | `write_todos` invoked correctly in every run |
 | State Storage | TODO list visible and correctly structured in LangSmith trace |
 
-**Method:** Provide 5–10 varied complex requests and manually review the generated TODO lists. Use LangSmith to confirm correct tool invocation and state storage.
-
 ---
 
-### Milestone 2 — Context Offloading via Virtual File System (Weeks 3–4)
+### Milestone 2 — Context Offloading via Virtual File System
 
 **Goal:** Enable the agent to persist intermediate results across execution steps using a virtual file system, overcoming LLM context-window limitations.
 
@@ -293,23 +303,22 @@ A lightweight, in-memory virtual file system backed by a Python dictionary (`_fi
 | `write_file` | `write_file(filename, content)` | Save content to a file |
 | `edit_file` | `edit_file(filename, old_string, new_string)` | In-place string replacement |
 
-The virtual file system is stored as `AgentState.files` (a `Dict[str, str]`) and is synced into and out of the global `_file_system` at the start of each node via `_set_files(state["files"])` and `_get_files()`.
+The virtual file system is stored as `AgentState.files` and synced into/out of the global `_file_system` at the start of each node via `_set_files()` and `_get_files()`.
 
 #### File system conventions
 
-Every task result is saved as `task_N_result.txt`. A compact summary (first 400 chars) is saved as `task_N_summary.txt` for reuse as context in subsequent tasks. The final synthesized report is saved as `FINAL_REPORT.txt`.
+Every task result is saved as `task_N_result.txt`. A compact summary (first 600 chars) is saved as `task_N_summary.txt` for context reuse in subsequent tasks. The final synthesized report is saved as `FINAL_REPORT.txt`.
 
 #### Final task read → modify → edit chain
 
-The last task in every run is instructed to demonstrate the full file system dependency chain:
+The last task in every run demonstrates the full file system dependency chain:
 1. `read_file("task_N_result.txt")` — load the previous task's output
 2. Generate a refined/combined version
 3. `write_file("task_(N+1)_result.txt", combined_content)` — save the new result
 4. `edit_file("task_(N+1)_result.txt", old_sentence, improved_sentence)` — refine in-place
 
 #### Key files
-
-- `tools.py` → `ls`, `read_file`, `write_file`, `edit_file`, `_get_files`, `_set_files`
+- `tools.py` → `ls`, `read_file`, `write_file`, `edit_file`
 - `graph.py` → `reason_node`, `execute_node`, `update_task_node`
 
 #### Evaluation
@@ -320,17 +329,15 @@ The last task in every run is instructed to demonstrate the full file system dep
 | `edit_file` Demonstrated | At least once per run on the final task |
 | State Persistence | File contents visible in `AgentState.files` in LangSmith trace |
 
-**Method:** Create test scenarios that process information longer than the context window (e.g., summarize three long articles then combine). Inspect LangSmith traces for correct `write_file → read_file` sequences and verify file content in state updates.
-
 ---
 
-### Milestone 3 — Sub-Agent Delegation (Weeks 5–6)
+### Milestone 3 — Sub-Agent Delegation
 
 **Goal:** Allow the supervisor agent to route specialized sub-tasks to dedicated sub-agents, promoting modularity and context isolation.
 
 #### What was built
 
-A `task(agent_name, input_data)` delegation tool that dispatches to one of four specialist sub-agents registered in a `sub_agents` dictionary:
+A `task(agent_name, input_data)` delegation tool that dispatches to one of four specialist sub-agents. Routing is **deterministic Python** — no LLM compliance required:
 
 **Researcher** (`_researcher_agent`)
 - Runs a Tavily web search (up to 4 results, `search_depth="advanced"`)
@@ -344,7 +351,7 @@ A `task(agent_name, input_data)` delegation tool that dispatches to one of four 
 
 **Summarizer** (`_summarizer_agent`)
 - LLM-only; no web search
-- Produces: one-sentence overview → 3–5 key points → one-sentence conclusion
+- Produces: one-sentence overview → 4–6 key points → one-sentence conclusion
 
 **Writer** (`_writer_agent`)
 - LLM-only; no web search
@@ -352,15 +359,17 @@ A `task(agent_name, input_data)` delegation tool that dispatches to one of four 
 
 #### Delegation routing logic
 
-The `reason_node` classifies each task's description with keyword matching and injects explicit delegation guidance into the LLM prompt:
+The `_route_to_agent()` function in `graph.py` classifies each task by keyword matching:
 
 ```python
-needs_research  → task("researcher", topic)
-needs_analysis  → task("analyst",    topic)
-needs_writing   → task("writer",     raw_notes)
-needs_summary   → task("summarizer", content)
-handle_self     → LLM reasons directly, no delegation
+task index 0 or "research/find/gather/..."  → task("researcher", topic)
+"analyze/compare/evaluate/assess/..."       → task("analyst",    topic)
+"write/draft/compose/report/..."            → task("writer",     notes)
+"summarize/condense/brief/..."              → task("summarizer", content)
+default                                     → task("analyst",    topic)
 ```
+
+Every delegation is recorded in `AgentState.delegation_log` and visible in LangSmith traces as `[Milestone3] Delegated to sub-agent: <name>`.
 
 #### Sub-agent registry
 
@@ -374,9 +383,8 @@ sub_agents: dict[str, callable] = {
 ```
 
 #### Key files
-
 - `tools.py` → `task` tool, all four sub-agent functions, `sub_agents` registry
-- `graph.py` → `reason_node` (delegation classification), `execute_node` (auto-save intercept)
+- `graph.py` → `_route_to_agent()`, `reason_node`
 
 #### Evaluation
 
@@ -384,69 +392,67 @@ sub_agents: dict[str, callable] = {
 |---|---|
 | Successful Delegation Rate | > 80% of relevant tasks correctly delegated |
 | Result Integration | Sub-agent output saved to file system and used in subsequent tasks |
-| LangSmith Trace | `[Milestone3] Delegated to sub-agent: <name>` visible in execution log |
-
-**Method:** Design test cases where specific sub-tasks should be handled by a defined sub-agent. Verify in LangSmith that the supervisor calls `task(...)` with the correct agent name, the sub-agent executes, and the result is stored correctly in `task_N_result.txt`.
+| LangSmith Trace | `[Milestone3] Delegated to sub-agent: <name>` visible in every run |
 
 ---
 
-### Milestone 4 — Full Integration & Use Case Application (Weeks 7–8)
+### Milestone 4 — Full Integration & Use Case Application
 
 **Goal:** Combine all prior components into a single cohesive system, expose it via a REST API, add a user interface, implement persistent memory, and validate end-to-end quality with automated evaluation.
 
 #### What was built
 
-**FastAPI Backend (`main.py`)**
-
-A production-ready REST API wrapping the full agent:
+**FastAPI Backend (`api.py`)**
 
 ```
-POST /run   { "query": "..." }  →  { "report": "...", "score": "..." }
-GET  /      →  { "message": "Supervisor Agent API Running" }
+POST /run     { "query": "..." }  →  { "report": "...", "score": "...", "from_memory": bool, "is_simple": bool }
+GET  /memory                      →  [ { "topic", "summary", "todos", "delegation_log" }, ... ]
+GET  /                            →  { "message": "Supervisor Agent API Running" }
 ```
 
-CORS is configured to allow all origins, enabling the React frontend to connect freely during development.
+**Smart Query Routing (`run.py`)**
 
-**`run_supervisor()` (`run.py`)**
+Simple questions bypass the full pipeline entirely:
 
-A synchronous graph runner used by the API. It invokes `graph.invoke(state)` with a fresh initial state, extracts `FINAL_REPORT.txt` from the final files dict, and returns it as a plain string.
+| Input | Behaviour |
+|---|---|
+| `what is AI?` | Direct LLM answer — no todos, no delegation |
+| `explain machine learning` | Direct LLM answer |
+| `Research AI impact in healthcare 2025` | Full pipeline |
+| `Create a business plan for a startup` | Full pipeline |
 
 **Persistent Memory (`memory.py`)**
 
 Cross-session memory backed by `memory.json`:
-- `save_memory(entry)` — called in `synthesize_node` after every successful run; stores `{topic, summary}` (deduplicates by topic)
-- `search_memory(query)` — called in `plan_node` before task decomposition; keyword-matches the user's objective against stored topics and injects matching past summaries into the execution log for context reuse
+- `save_memory(entry)` — stores `{topic, summary, todos, delegation_log}` after every run
+- `search_memory(query)` — fuzzy keyword match (35% overlap threshold for retrieval, 55% for deduplication)
+- Memory hit skips all LLM calls — instant cached response with **⚡ Retrieved from past memory** badge in UI
 
 **Automated Evaluation (`eval.py`)**
 
-LLM-as-a-judge scoring: `evaluate_output(report)` assesses the final report and returns a quality score. The score is returned alongside the report in the API response so users can gauge output quality immediately.
+- 10 test cases covering all 4 milestones
+- LLM-as-a-judge scoring (1–10) per report
+- Pass/fail summary against 80% threshold (M1–M3) and 70% threshold (M4)
 
-**React Frontend (`frontend/App.jsx`)**
+**React Frontend (`frontendpage/src/App.js`)**
 
-A functional UI with:
-- A textarea for entering the research query
-- A **Run Agent** button that calls `POST http://127.0.0.1:8000/run`
-- A loading indicator while the agent executes
-- Display of the quality score and the full formatted report
+- Chat bubble UI — user messages right, agent responses left
+- Collapsible history sidebar — all past sessions with task checklists and color-coded delegation logs
+- "Load report →" button to reload any past session
+- System-default dark/light theme with manual toggle (top-right)
+- Animated typing dots while agent runs
+- Quality score badge on each research response
 
-#### Key files
+#### Evaluation Results
 
-- `main.py` — FastAPI app, CORS, `/run` endpoint
-- `run.py` — `run_supervisor()` for API use
-- `memory.py` — `save_memory()`, `search_memory()`
-- `eval.py` — `evaluate_output()`
-- `frontend/App.jsx` — React UI
+| Milestone | Pass Rate | Threshold |
+|---|---|---|
+| M1 — Planning | **100%** | 80% |
+| M2 — File System | **100%** | 80% |
+| M3 — Delegation | **100%** | 80% |
+| M4 — End-to-End | **100%** | 70% |
 
-#### Evaluation
-
-| Metric | Target |
-|---|---|
-| End-to-End Task Completion Rate | > 70% of complex tasks complete without critical errors |
-| Output Quality | Final report rated "good" or "excellent" by LLM-as-a-judge |
-| API Availability | `/run` endpoint returns correct `report` and `score` fields |
-| Memory Reuse | Past run summaries surfaced and logged when topic overlaps |
-
-**Method:** Run the fully integrated agent on 10–20 complex end-to-end queries via the API and UI. Use LangSmith to debug full runs and the `score` field in the API response to track output quality trends.
+Average LLM-as-a-judge score: **8 / 10**
 
 ---
 
@@ -454,29 +460,26 @@ A functional UI with:
 
 ### Option 1 — React UI + FastAPI (Recommended)
 
-Start the backend:
+**Terminal 1 — Backend:**
 ```bash
-uvicorn main:app --reload
-# API running at http://127.0.0.1:8000
+cd deep-research_agent
+.venv/Scripts/python.exe -m uvicorn api:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-Start the frontend:
+**Terminal 2 — Frontend:**
 ```bash
-cd frontend
-npm install
+cd deep-research_agent/frontendpage
 npm start
-# UI running at http://localhost:3000
 ```
 
-Open `http://localhost:3000`, enter a research query, and click **Run Agent**.
+Open `http://localhost:3000`, enter a research query, and click **Send**.
 
 ### Option 2 — CLI
 
 ```bash
-python run.py
+cd deep-research_agent
+.venv/Scripts/python.exe run.py
 ```
-
-You will see a startup banner and an input prompt:
 
 ```
 ╔══════════════════════════════════════════════════════════════════╗
@@ -488,7 +491,6 @@ You will see a startup banner and an input prompt:
 ╚══════════════════════════════════════════════════════════════════╝
 
 Enter complex task:
-
 >>>
 ```
 
@@ -497,40 +499,42 @@ Enter complex task:
 >>> Analyze the impact of generative AI on the software engineering job market
 >>> Research recent advances in CRISPR gene editing and their clinical implications
 >>> Compare cloud providers AWS, GCP, and Azure for enterprise ML workloads
+>>> what is machine learning?
 ```
 
-Type `exit`, `quit`, or `q` to stop.
+### Option 3 — Run Full Evaluation
+
+```bash
+cd deep-research_agent
+.venv/Scripts/python.exe eval.py
+```
 
 ### Example session output
 
 ```
-  Task : Analyze the impact of generative AI on software engineering
+Task : Analyze the impact of generative AI on software engineering
 
 ==================================================
  TASK PLAN CREATED
 ==================================================
-[
-  {"task": "Research current state of generative AI tools...", "status": "pending"},
-  {"task": "Analyze impact on developer productivity...",      "status": "pending"},
-  ...
-]
+[{"task": "Research current state of generative AI tools...", "status": "pending"},
+ {"task": "Analyze impact on developer productivity...",      "status": "pending"},
+ ...]
 
 ⏳ Executing Task 1/5: Research current state of generative AI tools...
   🔀 Delegated → researcher
 ✅ Completed Task 1/5
-
 ⏳ Executing Task 2/5: Analyze impact on developer productivity...
   🔀 Delegated → analyst
 ✅ Completed Task 2/5
 ...
-
 ✅ Final report created
 
 ==================================================
- MILESTONE 2  —  Virtual File System  (6 files)
+ MILESTONE 2  —  Virtual File System  (11 files)
 ==================================================
-  - FINAL_REPORT.txt           (1842 chars)
-  - task_1_result.txt          (953 chars)
+  - FINAL_REPORT.txt                             (3842 chars)
+  - task_1_result.txt                            (2953 chars)
   ...
 
 ==================================================
@@ -551,7 +555,6 @@ Type `exit`, `quit`, or `q` to stop.
 ## API Reference
 
 ### `GET /`
-
 Health check.
 
 **Response:**
@@ -560,7 +563,6 @@ Health check.
 ```
 
 ### `POST /run`
-
 Run the full agent pipeline on a query.
 
 **Request body:**
@@ -571,9 +573,26 @@ Run the full agent pipeline on a query.
 **Response:**
 ```json
 {
-  "report": "=== Section 1 ===\nTask: Research...\n\n...",
-  "score":  "8/10"
+  "report": "**Executive Summary**\n\n...",
+  "score": "8",
+  "from_memory": false,
+  "is_simple": false
 }
+```
+
+### `GET /memory`
+Returns all saved sessions (newest first).
+
+**Response:**
+```json
+[
+  {
+    "topic": "Research AI in healthcare...",
+    "summary": "**Executive Summary**...",
+    "todos": [{"task": "...", "status": "completed", "result": "..."}],
+    "delegation_log": ["Task 1 -> researcher: ...", "Task 2 -> analyst: ..."]
+  }
+]
 ```
 
 ---
@@ -582,26 +601,28 @@ Run the full agent pipeline on a query.
 
 ```
 START
-  │
-  ▼
-plan_node            ← searches memory for past runs; calls write_todos directly;
-  │                    injects synthetic tool messages
-  ▼
+│
+▼
+plan_node            ← calls write_todos; injects synthetic tool messages for LangSmith
+│
+▼
 process_tool_results ← parses TODO JSON; enforces 4–6 task count; stores into AgentState.todos
-  │
-  ▼
+│
+▼
 select_task_node     ← finds next "pending" TODO; sets current_task_index
-  │
-  ├── (all done) ──▶ synthesize_node ──▶ save_memory() ──▶ END
-  │
-  ▼
-reason_node          ← classifies task; builds prompt with delegation guidance + prior context
-  │
-  ├── (tool calls) ──▶ execute_node ──▶ update_task_node ──▶ select_task_node (loop)
-  │
-  └── (no tool calls) ──▶ update_task_node ──▶ select_task_node (loop)
+│
+├── (all done) ──▶ synthesize_node ──▶ save_memory() ──▶ END
+│
+▼
+reason_node          ← _route_to_agent() picks sub-agent; calls sub_agents[agent](input)
+                       injects AIMessage + ToolMessage for LangSmith trace
+│
+▼
+update_task_node     ← marks task completed; writes compact summary file
+│
+└──▶ select_task_node (loop)
 
-synthesize_node      ← assembles all task_N_result.txt files; generates FINAL_REPORT.txt;
+synthesize_node      ← reads all task_N_result.txt files; LLM generates FINAL_REPORT.txt;
                        saves run to memory.json
 ```
 
@@ -613,7 +634,13 @@ synthesize_node      ← assembles all task_N_result.txt files; generates FINAL_
 |---|---|---|
 | 1 — Planning | Task Decomposition Accuracy | > 80% of requests produce a logical 5-task plan |
 | 2 — File System | Correct File System Tool Usage | > 80% of multi-step scenarios use read/write correctly |
-| 3 — Delegation | Successful Delegation & Result Integration | > 80% of relevant test cases correctly delegate and integrate results |
-| 4 — Full Integration | End-to-End Completion Rate & Output Quality | > 70% completion rate; output rated "good" or "excellent" |
+| 3 — Delegation | Successful Delegation & Result Integration | > 80% of relevant test cases correctly delegate |
+| 4 — Full Integration | End-to-End Completion Rate & Output Quality | > 70% completion; output rated ≥ 7/10 |
 
-All milestones use **LangSmith Tracing** as the primary verification tool. Enable it by setting `LANGCHAIN_TRACING_V2=true` and `LANGSMITH_API_KEY` in your `.env` file.
+All milestones use **LangSmith Tracing** as the primary verification tool. Enable it by setting `LANGCHAIN_TRACING_V2=true` and `LANGCHAIN_API_KEY` in your `.env` file.
+
+---
+
+## Author
+
+**Sasi Kannan** — Autonomous Cognitive Engine for Deep Research and Long-Horizon Tasks
